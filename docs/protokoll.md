@@ -77,7 +77,7 @@ Einstellen wird mit Ausgabe wie nach Anfrage beantwortet
 - cc = PHSEG1 (1..8)
 - dd = PHSEG2 (1..8)
 - ee = PROPSEG (1..8)
-- ff = Sendeprioriot�t (0..3)
+- ff = Sendepriorität (0..3)
 
 Irrtümliches Verstellen der Parameter kann durch 1s-Tastendruck (im Betrieb, nicht beim Powerup!) resettet werden.
 
