@@ -1,4 +1,4 @@
-import serial, logging, csv, time
+import serial, logging, csv, datetime
 logging.basicConfig(level=logging.DEBUG)
 
 
@@ -47,7 +47,12 @@ class Hanguard():
         return ret
 
     def send_hello(self):
-        self.sp.write(b"c;0014;07D90C0506110723\r\n")  # Send Hello!
+        # montag is ne 1
+        now = datetime.datetime.now()
+        date = "%04X%02X%02X%02X%02X%02X%02X" % (now.year, now.month, now.day, 7, now.hour, now.minute, now.second)
+        send = b"c;0014;%s\r\n" % date.encode()
+        logging.debug("send %r", send)
+        self.sp.write(send)  # Send Hello!
 
     def run(self):
         self.send_hello()
@@ -103,7 +108,7 @@ class Hanguard():
             if cmd == 0:
                 #     address       target     cmd
                 ret = (int(door["door_key"]) << 5) | (1 << 4) | 3
-                allow = "00"
+                allow = "" # "00" will close abschliessen
 
                 logging.info(self.member.get(msg[2]))
 
@@ -111,7 +116,6 @@ class Hanguard():
                     logging.debug("%s wants to open %s", member["firstname"], door["name"])
                     if member_door := self.member_door.get(f"{member['member_key']};{door['door_key']}"):
                         allow = "%02x" % 3
-                    # when allow = "00" => close abschliessen
 
                 return "c;%04X;%s\r\n" % (ret, allow)
 
