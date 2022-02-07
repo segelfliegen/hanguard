@@ -3,6 +3,9 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 class Hanguard():
+    """
+    Hanguard is the hangar guard, who only accepts request to doors with the right keys ;)
+    """
 
     def __init__(self):
         super().__init__()
@@ -38,8 +41,9 @@ class Hanguard():
         with open(filename) as f:
             reader = csv.DictReader(f, delimiter="\t")
             for row in reader:
-                if key := ";".join([(row[f] or "") for f in key_fields]):
-                    #assert key not in ret
+                if (key := ";".join([(row[f] or "") for f in key_fields])) and key != "0":
+                    # fixme: Is it okay that a key might match multiple times? e.g. chip 8D00000369491F14
+                    #assert key not in ret, f"{key} already set"
                     ret[key] = row
 
                     logging.debug(f"{filename} {key} = {row}")
@@ -47,9 +51,16 @@ class Hanguard():
         return ret
 
     def send_hello(self):
-        # montag is ne 1
         now = datetime.datetime.now()
-        date = "%04X%02X%02X%02X%02X%02X%02X" % (now.year, now.month, now.day, 7, now.hour, now.minute, now.second)
+        date = "%04X%02X%02X%02X%02X%02X%02X" % (
+            now.year,
+            now.month,
+            now.day,
+            now.weekday() + 1,  # 1 is monday
+            now.hour,
+            now.minute,
+            now.second
+        )
         send = b"c;0014;%s\r\n" % date.encode()
         logging.debug("send %r", send)
         self.sp.write(send)  # Send Hello!
@@ -91,29 +102,34 @@ class Hanguard():
         cmd = int(msg[1], base=16)
 
         # check for alarm, if 10th bit is set, ignore
-        if cmd & 1 << 10:
+        if cmd & 0x1 << 10:
             return
 
         # do we have a sender address?
         if cmd & (1 << 4) == 0:
-            door = (cmd & (0xF << 5)) >> 5
-            #logging.info(f"Tür {self.door[str(door)]}")
-
-            door = self.door.get(str(door))
-
             cmd &= 0x1F
-            logging.debug(f"cmd = {cmd}")
+            door_key = (cmd & (0xF << 5)) >> 5
+
+            logging.debug(f"cmd={cmd} on door={door_key}")
+
+            if not (door := self.door.get(str(door_key))):
+                logging.error(f"Received request from unknown door_key={door_key}")
+                return
 
             # open
             if cmd == 0:
                 #     address       target     cmd
-                ret = (int(door["door_key"]) << 5) | (1 << 4) | 3
-                allow = "" # "00" will close abschliessen
-
-                logging.info(self.member.get(msg[2]))
+                ret = (door_key << 5) | (0x1 << 4) | 3
+                allow = "" # deny, "00" will send close
 
                 if member := self.member.get(msg[2]):
-                    logging.debug("%s wants to open %s", member["firstname"], door["name"])
+                    logging.debug(
+                        "%s %s wants to open %s",
+                        member["firstname"],
+                        member["lastname"],
+                        door["name"]
+                    )
+
                     if member_door := self.member_door.get(f"{member['member_key']};{door['door_key']}"):
                         allow = "%02x" % 3
 
