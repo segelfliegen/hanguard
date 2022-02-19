@@ -4,7 +4,8 @@ logging.basicConfig(level=logging.DEBUG)
 
 class Hanguard():
     """
-    Hanguard is the hangar guard, who only accepts request to doors with the right keys ;)
+    Hanguard is the hangar guard, who only accepts request to doors for people
+    having the right keys ;)
     """
 
     def __init__(self):
@@ -50,6 +51,22 @@ class Hanguard():
 
         return ret
 
+    def send(self, cmd, recipient=0, msg=""):
+        """
+        Sends a CAN-bus command.
+
+        cmd is the command as described from protokoll.md.
+        recipient is a specific recipient (door_id), 0 is a broadcast
+        msg is the message part to be send.
+        """
+
+        #     recipient          target       command
+        cmd = (recipient << 5) | (0x1 << 4) | cmd
+        msg = b"c;%04X;%s\r\n" % (cmd, msg.encode())
+
+        logging.debug("Sending >>> %r", msg)
+        self.sp.write(msg)
+
     def send_hello(self):
         now = datetime.datetime.now()
         date = "%04X%02X%02X%02X%02X%02X%02X" % (
@@ -61,9 +78,8 @@ class Hanguard():
             now.minute,
             now.second
         )
-        send = b"c;0014;%s\r\n" % date.encode()
-        logging.debug("send %r", send)
-        self.sp.write(send)  # Send Hello!
+
+        self.send(14, msg=date)  # broadcast
 
     def run(self):
         self.send_hello()
@@ -73,36 +89,42 @@ class Hanguard():
             if self.sp.in_waiting > 0:
                 # Read data out of the buffer until a carraige return/new line is found
                 buf = self.sp.readline()
+                logging.debug("Received <<< %r", buf)
 
-                while buf: #todo
-                    # If ACK or NACK, just log.
-                    if buf == b"\x06":
-                        #buf = buf[1:]
-                        logging.info("ACK")
-                        break # continue
-                    elif buf == b"\x15":
-                        #buf = buf[1:]
-                        logging.warning("NACK")
-                        break # continue
+                buf = buf.decode()
 
-                    logging.debug("Received %r", buf)
+                while buf:
+                    # ACK
+                    if buf[0] == "\x06":
+                        buf = buf[1:]
+                        logging.debug("ACK")
+                    # NACK
+                    elif buf[0] == "\x15":
+                        buf = buf[1:]
+                        logging.debug("NACK")
+                    # Message
+                    elif buf.startswith("c;"):
+                        #msg, buf = buf.split("\r\n", 1)
+                        msg = buf
+                        buf = ""
 
-                    msg = buf.decode().strip().split(";")
-                    if msg[0] != "c":
-                        logging.info("Received junk %r, ignoring (doesn't start with c)", buf)
-                        break  # continue
+                        parts = msg.strip().split(";")
+                        if len(parts) != 3:
+                            logging.error("Received invalid msg %r", msg)
+                            continue
 
-                    if msg := self.handle(msg):
-                        logging.info("Sending %r", msg)
-                        self.sp.write(msg.encode())
-
-                    break  # remove
+                        self.handle(parts)
+                    # Junk
+                    else:
+                        logging.error("Don't know how to handle %r", buf[0])
+                        buf = buf[1:]
 
     def handle(self, msg):
         cmd = int(msg[1], base=16)
 
         # check for alarm, if 10th bit is set, ignore
         if cmd & 0x1 << 10:
+            logging.info("Received an alarm system message, ignoring")
             return
 
         # do we have a sender address?
@@ -118,10 +140,9 @@ class Hanguard():
 
             # open
             if cmd == 0:
-                #     address       target     cmd
-                ret = (door_key << 5) | (0x1 << 4) | 3
                 allow = "" # deny, "00" will send close
 
+                # Check for chip id and get specific member identified by this.
                 if member := self.member.get(msg[2]):
                     logging.debug(
                         "%s %s wants to open %s",
@@ -130,10 +151,14 @@ class Hanguard():
                         door["name"]
                     )
 
+                    # Does this member have access right to the specified door?
                     if member_door := self.member_door.get(f"{member['member_key']};{door['door_key']}"):
-                        allow = "%02x" % 3
+                        allow = "%02x" % 3  # open for 3 seconds
 
-                return "c;%04X;%s\r\n" % (ret, allow)
+                self.send(3, door_key, allow)
+
+            else:
+                logging.warning(f"cmd={cmd} not implemented")
 
 
 hanguard = Hanguard()

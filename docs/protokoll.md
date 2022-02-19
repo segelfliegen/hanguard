@@ -2,7 +2,7 @@
 
 Protokolle beginnen ein- wie ausgehend mit einem Steuerzeichen, Semikolon, Dateninhalt und enden mit CR+LF.
 
-Jedes Protokoll wird nach Empfang von CR von ACK(=0x06) oder NACK(=0x15) gem#ß ASCII-Tabelle ohne nachfolgendes CR+LF beantwortet. Radix für Zahlenwerte ist Hex mit Großbuchstaben, kein führendes 0x o.ä. Leerzeichen zwischen Bytes im Protokoll werden ignoriert.
+Jedes Protokoll wird nach Empfang von CR von ACK(=0x06) oder NACK(=0x15) gemäß ASCII-Tabelle ohne nachfolgendes CR+LF beantwortet. Radix für Zahlenwerte ist Hex mit Großbuchstaben, kein führendes 0x o.ä. Leerzeichen zwischen Bytes im Protokoll werden ignoriert.
 
 ## Schnittstelle
 
