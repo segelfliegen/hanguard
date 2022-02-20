@@ -61,7 +61,9 @@ class Hanguard():
         """
 
         #     recipient          target       command
-        cmd = (recipient << 5) | (0x1 << 4) | cmd
+        if recipient:
+            cmd = (recipient << 5) | (0x1 << 4) | cmd
+
         msg = b"c;%04X;%s\r\n" % (cmd, msg.encode())
 
         logging.debug("Sending >>> %r", msg)
@@ -79,7 +81,7 @@ class Hanguard():
             now.second
         )
 
-        self.send(14, msg=date)  # broadcast
+        self.send(20, msg=date)  # broadcast
 
     def run(self):
         self.send_hello()
@@ -129,8 +131,8 @@ class Hanguard():
 
         # do we have a sender address?
         if cmd & (1 << 4) == 0:
-            cmd &= 0x1F
             door_key = (cmd & (0xF << 5)) >> 5
+            cmd &= 0x1F
 
             logging.debug(f"cmd={cmd} on door={door_key}")
 
@@ -154,8 +156,26 @@ class Hanguard():
                     # Does this member have access right to the specified door?
                     if member_door := self.member_door.get(f"{member['member_key']};{door['door_key']}"):
                         allow = "%02x" % 3  # open for 3 seconds
+                    else:
+                        logging.debug("DENIED")
 
                 self.send(3, door_key, allow)
+
+            # status
+            elif cmd == 2:
+                status = int(msg[2], base=16)
+                meaning = []
+                if status & 0x1:
+                    meaning.append("abgeschlossen")
+                else:
+                    meaning.append("nicht abgeschlossen")
+
+                if status & 0x2:
+                    meaning.append("sabotiert")
+                if status & 0x4:
+                    meaning.append("alarm")
+
+                logging.debug(f"Status door {self.door.get(str(door_key))} => {', '.join(meaning)}")
 
             else:
                 logging.warning(f"cmd={cmd} not implemented")
