@@ -1,5 +1,5 @@
-import serial, logging, csv, datetime
-logging.basicConfig(level=logging.DEBUG)
+import sys, serial, logging, csv, datetime
+logging.basicConfig(level=logging.INFO)
 
 
 class Hanguard():
@@ -21,15 +21,21 @@ class Hanguard():
             len(self.door), len(self.member), len(self.member_door)
         )
 
-        # Start serial connection
-        self.sp = serial.Serial(
-            port="/dev/ttyUSB5",
-            baudrate=115200,
-            bytesize=8,
-            timeout=2,
-            stopbits=serial.STOPBITS_ONE,
-            parity=serial.PARITY_EVEN
-        )
+        try:
+            # Start serial connection
+            self.sp = serial.Serial(
+                port="/dev/ttyUSB5",
+                baudrate=115200,
+                bytesize=8,
+                timeout=2,
+                stopbits=serial.STOPBITS_ONE,
+                parity=serial.PARITY_EVEN
+            )
+        except serial.serialutil.SerialException:
+            self.sp = None
+            logging.fatal("Could not open serial port, continue in simulation mode")
+        except:
+            raise
 
     def __csv2dict(self, filename, key_fields):
         """
@@ -46,10 +52,35 @@ class Hanguard():
                     # fixme: Is it okay that a key might match multiple times? e.g. chip 8D00000369491F14
                     #assert key not in ret, f"{key} already set"
                     ret[key] = row
-
                     logging.debug(f"{filename} {key} = {row}")
+                else:
+                    ret["#" + row["lastname"]] = row
 
         return ret
+
+    def dump_door_matrix(self):
+        """
+        Dumps a door matrix as CSV
+        """
+        members = list(self.member.values())
+        #members.sort(key=lambda member: member["member_key"])
+
+        writer = csv.DictWriter(
+            sys.stdout,
+            extrasaction="ignore",
+            dialect="excel",
+            delimiter="\t",
+            fieldnames=["member_key", "firstname", "lastname"] + [door["name"] for door in self.door.values()]
+        )
+        writer.writeheader()
+
+        for member in members:
+            row = member.copy()
+            for door in self.door.values():
+                row[door["name"]] = "x" if ";".join((member["member_key"], door["door_key"])) in self.member_door else "-"
+
+            writer.writerow(row)
+
 
     def send(self, cmd, recipient=0, msg=""):
         """
@@ -182,4 +213,5 @@ class Hanguard():
 
 
 hanguard = Hanguard()
-hanguard.run()
+#hanguard.run()
+hanguard.dump_door_matrix()
