@@ -1,5 +1,11 @@
-import sys, serial, logging, csv, datetime
-logging.basicConfig(level=logging.INFO)
+import csv
+import datetime
+import logging
+import os
+import serial
+import sys
+
+logging.basicConfig(level=logging.DEBUG)
 
 
 class Hanguard():
@@ -8,7 +14,7 @@ class Hanguard():
     having the right keys ;)
     """
 
-    def __init__(self):
+    def __init__(self, port):
         super().__init__()
 
         # Read member cache
@@ -21,21 +27,15 @@ class Hanguard():
             len(self.door), len(self.member), len(self.member_door)
         )
 
-        try:
-            # Start serial connection
-            self.sp = serial.Serial(
-                port="/dev/ttyUSB5",
-                baudrate=115200,
-                bytesize=8,
-                timeout=2,
-                stopbits=serial.STOPBITS_ONE,
-                parity=serial.PARITY_EVEN
-            )
-        except serial.serialutil.SerialException:
-            self.sp = None
-            logging.fatal("Could not open serial port, continue in simulation mode")
-        except:
-            raise
+        # Start serial connection
+        self.sp = serial.Serial(
+            port=port,
+            baudrate=115200,
+            bytesize=8,
+            timeout=2,
+            stopbits=serial.STOPBITS_ONE,
+            parity=serial.PARITY_EVEN
+        )
 
     def __csv2dict(self, filename, key_fields):
         """
@@ -211,7 +211,9 @@ class Hanguard():
             else:
                 logging.warning(f"cmd={cmd} not implemented")
 
-
-hanguard = Hanguard()
-#hanguard.run()
-hanguard.dump_door_matrix()
+if __name__ == "__main__":
+    hanguard = Hanguard(
+        port="/dev/ttyUSB5" if os.name == "posix" else "COM3",
+    )
+    hanguard.run()
+    # hanguard.dump_door_matrix()
