@@ -5,6 +5,7 @@ name = "pypi"
 
 [packages]
 pyserial = "==3.5"
+pyodbc = "==5.2"
 
 [requires]
 python_version = "3.13"

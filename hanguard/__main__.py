@@ -1,35 +1,28 @@
-import csv
+"""
+Hanguard is the hangar guard, who only accepts request to doors for people
+having the right keys ;)
+"""
+
+import json
 import datetime
 import logging
-import os
 import serial
-import sys
+import pyodbc
 
 logging.basicConfig(level=logging.DEBUG)
 
 
 class Hanguard():
-    """
-    Hanguard is the hangar guard, who only accepts request to doors for people
-    having the right keys ;)
-    """
-
-    def __init__(self, port):
+    def __init__(self):
         super().__init__()
 
-        # Read member cache
-        self.door = self.__csv2dict("door.csv", "door_key")
-        self.member = self.__csv2dict("member.csv", "chip")
-        self.member_door = self.__csv2dict("member_door.csv", ["member_key", "door_key"])
-
-        logging.info(
-            "%d door, %d member, %d member_door",
-            len(self.door), len(self.member), len(self.member_door)
-        )
+        # Read configuration
+        with open("hanguard_config.json", "r") as f:
+            self.config = json.load(f)
 
         # Start serial connection
         self.sp = serial.Serial(
-            port=port,
+            port=self.config["port"],
             baudrate=115200,
             bytesize=8,
             timeout=2,
@@ -37,50 +30,65 @@ class Hanguard():
             parity=serial.PARITY_EVEN
         )
 
-    def __csv2dict(self, filename, key_fields):
-        """
-        Reads a csv file into a dict, with a specified, possibly combined key.
-        """
-        ret = {}
-        if not isinstance(key_fields, (list, tuple)):
-            key_fields = [key_fields]
+        # Connect to SQL database
+        self.sql_conn_str = \
+            "Driver={SQL Server};" \
+            f"SERVER={self.config["sql"]["server"]};" \
+            f"DATABASE={self.config["sql"]["database"]};" \
+            f"UID={{{self.config["sql"]["uid"]}}};" \
+            f"PWD={self.config["sql"]["password"]}"
 
-        with open(filename) as f:
-            reader = csv.DictReader(f, delimiter="\t")
-            for row in reader:
-                if (key := ";".join([(row[f] or "") for f in key_fields])) and key != "0":
-                    # fixme: Is it okay that a key might match multiple times? e.g. chip 8D00000369491F14
-                    #assert key not in ret, f"{key} already set"
-                    ret[key] = row
-                    logging.debug(f"{filename} {key} = {row}")
-                else:
-                    ret["#" + row["lastname"]] = row
+        logging.debug(f"{self.sql_conn_str=}")
 
-        return ret
+        # Read & cache doors from database
+        self.doors = {
+            door["Tür_Nummer"]: door["Tür_Name"]
+            for door in self._sql_request("SELECT * FROM dbo.[Türen]"):
+        }
 
-    def dump_door_matrix(self):
+        logging.debug(f"{self.doors=}")
+
+    def _sql_request(self, sql, *args):
         """
-        Dumps a door matrix as CSV
+        Internal helper to execute and run an SQL statement.
+        The returned result is a list of dict with the result.
         """
-        members = list(self.member.values())
-        #members.sort(key=lambda member: member["member_key"])
+        try:
+            with pyodbc.connect(self.sql_conn_str) as conn:
+                with conn.cursor() as cursor:
+                    logging.debug(f"{sql=} {args=}")
+                    cursor.execute(sql, *args)
+                    columns = [column[0] for column in cursor.description]
+                    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        except pyodbc.Error as e:
+            logging.exception(e)
+            return []
 
-        writer = csv.DictWriter(
-            sys.stdout,
-            extrasaction="ignore",
-            dialect="excel",
-            delimiter="\t",
-            fieldnames=["member_key", "firstname", "lastname"] + [door["name"] for door in self.door.values()]
+    def check_access(self, chip_id, door_id):
+        ret = _sql_request(
+            "SELECT Mitgliedsnummer, Vorname, Nachname FROM dbo.[Mitglieder] WHERE Chip_ID = ? OR Chip_ID1 = ? OR Chip_ID2 = ?",
+            chip_id, chip_id, chip_id
         )
-        writer.writeheader()
 
-        for member in members:
-            row = member.copy()
-            for door in self.door.values():
-                row[door["name"]] = "x" if ";".join((member["member_key"], door["door_key"])) in self.member_door else "-"
+        if ret:
+            logging.debug(
+                "%s %s (%s) wants to open %s",
+                ret["Vorname"],
+                ret["Nachname"],
+                ret["Mitgliedsnummer"],
+                self.doors[door_id],
+            )
 
-            writer.writerow(row)
+            # Does this member have access right to the specified door?
+            ret = _sql_request(
+                "SELECT * FROM dbo.[Berechtigung_Tür] WHERE Mitgliedsnummer = ? AND {Tür_Nummer} = ?",
+                ret["Mitgliedsnummer"], door_id
+            )
 
+            # TODO: CHECK DATA VALIDITY!
+            return bool(ret)
+
+        return False
 
     def send(self, cmd, recipient=0, msg=""):
         """
@@ -162,33 +170,21 @@ class Hanguard():
 
         # do we have a sender address?
         if cmd & (1 << 4) == 0:
-            door_key = (cmd & (0xF << 5)) >> 5
+            door_id = (cmd & (0xF << 5)) >> 5
             cmd &= 0x1F
 
-            logging.debug(f"cmd={cmd} on door={door_key}")
-
-            if not (door := self.door.get(str(door_key))):
-                logging.error(f"Received request from unknown door_key={door_key}")
-                return
+            logging.debug(f"{cmd=} on {door_id=}")
 
             # open
             if cmd == 0:
                 allow = "" # deny, "00" will send close
 
-                # Check for chip id and get specific member identified by this.
-                if member := self.member.get(msg[2]):
-                    logging.debug(
-                        "%s %s wants to open %s",
-                        member["firstname"],
-                        member["lastname"],
-                        door["name"]
-                    )
-
-                    # Does this member have access right to the specified door?
-                    if member_door := self.member_door.get(f"{member['member_key']};{door['door_key']}"):
+                if not self.doors.get(door_id):
+                    logging.error(f"Received request from unknown {door_id=}; Either update database or restart.")
+                else:
+                    # Check for chip id and get specific member identified by this.
+                    if self.check_access(msg[2], door_id)
                         allow = "%02x" % 3  # open for 3 seconds
-                    else:
-                        logging.debug("DENIED")
 
                 self.send(3, door_key, allow)
 
@@ -211,9 +207,7 @@ class Hanguard():
             else:
                 logging.warning(f"cmd={cmd} not implemented")
 
+
 if __name__ == "__main__":
-    hanguard = Hanguard(
-        port="/dev/ttyUSB5" if os.name == "posix" else "COM3",
-    )
+    hanguard = Hanguard()
     hanguard.run()
-    # hanguard.dump_door_matrix()
