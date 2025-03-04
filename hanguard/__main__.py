@@ -42,8 +42,8 @@ class Hanguard():
 
         # Read & cache doors from database
         self.doors = {
-            door["Tür_Nummer"]: door["Tür_Name"]
-            for door in self._sql_request("SELECT * FROM dbo.[Türen]"):
+            int(door["Tür_Nummer"]): door["Tür_Name"]
+            for door in self._sql_request("SELECT * FROM dbo.[Türen]")
         }
 
         logging.debug(f"{self.doors=}")
@@ -65,28 +65,48 @@ class Hanguard():
             return []
 
     def check_access(self, chip_id, door_id):
-        ret = _sql_request(
+        ret = self._sql_request(
             "SELECT Mitgliedsnummer, Vorname, Nachname FROM dbo.[Mitglieder] WHERE Chip_ID = ? OR Chip_ID1 = ? OR Chip_ID2 = ?",
             chip_id, chip_id, chip_id
         )
 
         if ret:
+            member = ret[0]
             logging.debug(
                 "%s %s (%s) wants to open %s",
-                ret["Vorname"],
-                ret["Nachname"],
-                ret["Mitgliedsnummer"],
+                member["Vorname"],
+                member["Nachname"],
+                member["Mitgliedsnummer"],
                 self.doors[door_id],
             )
 
             # Does this member have access right to the specified door?
-            ret = _sql_request(
-                "SELECT * FROM dbo.[Berechtigung_Tür] WHERE Mitgliedsnummer = ? AND {Tür_Nummer} = ?",
-                ret["Mitgliedsnummer"], door_id
+            ret = self._sql_request(
+                "SELECT * FROM dbo.[Berechtigung_Tür] WHERE Mitgliedsnummer = ? AND [Tür_Nummer] = ?",
+                member["Mitgliedsnummer"], door_id
             )
 
             # TODO: CHECK DATA VALIDITY!
-            return bool(ret)
+            access = bool(ret)
+
+            if access:
+                logging.info(
+                    "GRANTED access to %s for %s %s (%s)",
+                    self.doors[door_id],
+                    member["Vorname"],
+                    member["Nachname"],
+                    member["Mitgliedsnummer"],
+                )
+            else:
+                logging.error(
+                    "DENIED access to %s for %s %s (%s)",
+                    self.doors[door_id],
+                    member["Vorname"],
+                    member["Nachname"],
+                    member["Mitgliedsnummer"],
+                )
+
+            return access
 
         return False
 
@@ -183,10 +203,10 @@ class Hanguard():
                     logging.error(f"Received request from unknown {door_id=}; Either update database or restart.")
                 else:
                     # Check for chip id and get specific member identified by this.
-                    if self.check_access(msg[2], door_id)
+                    if self.check_access(msg[2], door_id):
                         allow = "%02x" % 3  # open for 3 seconds
 
-                self.send(3, door_key, allow)
+                self.send(3, door_id, allow)
 
             # status
             elif cmd == 2:
@@ -202,7 +222,7 @@ class Hanguard():
                 if status & 0x4:
                     meaning.append("alarm")
 
-                logging.debug(f"Status door {self.door.get(str(door_key))} => {', '.join(meaning)}")
+                logging.debug(f"Status door {self.doors.get(int(door_id))} => {', '.join(meaning)}")
 
             else:
                 logging.warning(f"cmd={cmd} not implemented")
