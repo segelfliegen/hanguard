@@ -16,6 +16,8 @@ class Hanguard():
     def __init__(self):
         super().__init__()
 
+        self.last_hello = None  # timestamp of last hello
+
         # Read configuration
         with open("hanguard_config.json", "r") as f:
             self.config = json.load(f)
@@ -140,16 +142,20 @@ class Hanguard():
             now.second
         )
 
+        logging.info(f"send_hello {now=}")
         self.send(20, msg=date)  # broadcast
+        self.last_hello = now
 
     def run(self):
-        self.send_hello()
-
         while True:
+            # logging.debug("wait")
+            # Send Hello every 10 minutes
+            if not self.last_hello or datetime.datetime.now() - self.last_hello > datetime.timedelta(minutes=10):
+                self.send_hello()
+
              # Wait until there is data waiting in the serial buffer
-            if self.sp.in_waiting > 0:
+            if buf := self.sp.readline():
                 # Read data out of the buffer until a carraige return/new line is found
-                buf = self.sp.readline()
                 logging.debug("Received <<< %r", buf)
 
                 buf = buf.decode()
